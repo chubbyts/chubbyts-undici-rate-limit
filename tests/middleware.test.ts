@@ -4,28 +4,12 @@ import { useObjectMock } from '@chubbyts/chubbyts-function-mock/dist/object-mock
 import type { Handler } from '@chubbyts/chubbyts-undici-server/dist/server';
 import { Response, ServerRequest } from '@chubbyts/chubbyts-undici-server/dist/server';
 import { RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
+import { HttpError } from '@chubbyts/chubbyts-http-error/dist/http-error';
 import type { KeyResolver } from '../src/key-resolver';
-import type { LimitExceededHandler, RateLimiter } from '../src/middleware';
-import { createDefaultLimitExceededHandler, createRateLimitMiddleware } from '../src/middleware';
+import type { RateLimiter } from '../src/middleware';
+import { createRateLimitMiddleware } from '../src/middleware';
 
 describe('middleware', () => {
-  describe('createDefaultLimitExceededHandler', () => {
-    test('createDefaultLimitExceededHandler', async () => {
-      const request = new ServerRequest('https://example.com');
-
-      const response = await createDefaultLimitExceededHandler()(request, { limit: 10, remaining: 0, reset: 30 });
-
-      expect(response.status).toBe(429);
-      expect(response.statusText).toBe('Too Many Requests');
-      expect(Object.fromEntries(response.headers.entries())).toMatchInlineSnapshot(`
-        {
-          "content-type": "text/plain; charset=utf-8",
-        }
-      `);
-      expect(await response.text()).toBe('Too Many Requests');
-    });
-  });
-
   describe('createRateLimitMiddleware', () => {
     test('without key', async () => {
       const request = new ServerRequest('https://example.com/resource', { method: 'POST' });
@@ -158,190 +142,6 @@ describe('middleware', () => {
       expect(handlerMocks).toHaveLength(0);
       expect(keyResolverMocks).toHaveLength(0);
       expect(rateLimiterMocks).toHaveLength(0);
-    });
-
-    test('with key, exceeded, with default limit exceeded handler', async () => {
-      const request = new ServerRequest('https://example.com');
-
-      const [handler, handlerMocks] = useFunctionMock<Handler>([]);
-
-      const [keyResolver, keyResolverMocks] = useFunctionMock<KeyResolver>([
-        { parameters: [request], return: '203.0.113.1' },
-      ]);
-
-      const [rateLimiter, rateLimiterMocks] = useObjectMock<RateLimiter>([
-        { name: 'points', value: 10 },
-        { name: 'consume', parameters: ['203.0.113.1'], return: Promise.reject(new RateLimiterRes(0, 400, 11, false)) },
-      ]);
-
-      const middleware = createRateLimitMiddleware(keyResolver, rateLimiter);
-
-      const rateLimitResponse = await middleware(request, handler);
-
-      expect(rateLimitResponse.status).toBe(429);
-      expect(rateLimitResponse.statusText).toBe('Too Many Requests');
-      expect(Object.fromEntries(rateLimitResponse.headers.entries())).toMatchInlineSnapshot(`
-        {
-          "content-type": "text/plain; charset=utf-8",
-          "ratelimit-limit": "10",
-          "ratelimit-remaining": "0",
-          "ratelimit-reset": "1",
-          "retry-after": "1",
-        }
-      `);
-      expect(await rateLimitResponse.text()).toBe('Too Many Requests');
-
-      expect(handlerMocks).toHaveLength(0);
-      expect(keyResolverMocks).toHaveLength(0);
-      expect(rateLimiterMocks).toHaveLength(0);
-    });
-
-    test('with key, exceeded, with custom limit exceeded handler', async () => {
-      const request = new ServerRequest('https://example.com');
-      const response = new Response('{"error":"slow down"}', {
-        status: 429,
-        statusText: 'Too Many Requests',
-        headers: { 'content-type': 'application/json' },
-      });
-
-      const [handler, handlerMocks] = useFunctionMock<Handler>([]);
-
-      const [keyResolver, keyResolverMocks] = useFunctionMock<KeyResolver>([
-        { parameters: [request], return: '203.0.113.1' },
-      ]);
-
-      const [rateLimiter, rateLimiterMocks] = useObjectMock<RateLimiter>([
-        { name: 'points', value: 10 },
-        { name: 'consume', parameters: ['203.0.113.1'], return: Promise.reject(new RateLimiterRes(0, 0, 15, false)) },
-      ]);
-
-      const [limitExceededHandler, limitExceededHandlerMocks] = useFunctionMock<LimitExceededHandler>([
-        { parameters: [request, { limit: 10, remaining: 0, reset: 0 }], return: Promise.resolve(response) },
-      ]);
-
-      const middleware = createRateLimitMiddleware(keyResolver, rateLimiter, limitExceededHandler);
-
-      const rateLimitResponse = await middleware(request, handler);
-
-      expect(rateLimitResponse.status).toBe(429);
-      expect(Object.fromEntries(rateLimitResponse.headers.entries())).toMatchInlineSnapshot(`
-        {
-          "content-type": "application/json",
-          "ratelimit-limit": "10",
-          "ratelimit-remaining": "0",
-          "ratelimit-reset": "0",
-          "retry-after": "1",
-        }
-      `);
-      expect(await rateLimitResponse.text()).toBe('{"error":"slow down"}');
-
-      expect(handlerMocks).toHaveLength(0);
-      expect(keyResolverMocks).toHaveLength(0);
-      expect(rateLimiterMocks).toHaveLength(0);
-      expect(limitExceededHandlerMocks).toHaveLength(0);
-    });
-
-    test('with key, exceeded, with rate limiter res of a foreign rate-limiter-flexible copy', async () => {
-      const request = new ServerRequest('https://example.com');
-
-      const [handler, handlerMocks] = useFunctionMock<Handler>([]);
-
-      const [keyResolver, keyResolverMocks] = useFunctionMock<KeyResolver>([
-        { parameters: [request], return: '203.0.113.1' },
-      ]);
-
-      const [rateLimiter, rateLimiterMocks] = useObjectMock<RateLimiter>([
-        { name: 'points', value: 10 },
-        {
-          name: 'consume',
-          parameters: ['203.0.113.1'],
-          return: Promise.reject({
-            remainingPoints: 0,
-            msBeforeNext: 2500,
-            consumedPoints: 11,
-            isFirstInDuration: false,
-          }),
-        },
-      ]);
-
-      const middleware = createRateLimitMiddleware(keyResolver, rateLimiter);
-
-      const rateLimitResponse = await middleware(request, handler);
-
-      expect(rateLimitResponse.status).toBe(429);
-      expect(rateLimitResponse.headers.get('ratelimit-remaining')).toBe('0');
-      expect(rateLimitResponse.headers.get('retry-after')).toBe('3');
-
-      expect(handlerMocks).toHaveLength(0);
-      expect(keyResolverMocks).toHaveLength(0);
-      expect(rateLimiterMocks).toHaveLength(0);
-    });
-
-    test('with key, exceeded, with rate limit headers already set by the limit exceeded handler', async () => {
-      const request = new ServerRequest('https://example.com');
-
-      const [handler, handlerMocks] = useFunctionMock<Handler>([]);
-
-      const [keyResolver, keyResolverMocks] = useFunctionMock<KeyResolver>([
-        { parameters: [request], return: '203.0.113.1' },
-      ]);
-
-      const [rateLimiter, rateLimiterMocks] = useObjectMock<RateLimiter>([
-        { name: 'points', value: 10 },
-        {
-          name: 'consume',
-          parameters: ['203.0.113.1'],
-          return: Promise.reject(new RateLimiterRes(0, 2500, 11, false)),
-        },
-      ]);
-
-      const [limitExceededHandler, limitExceededHandlerMocks] = useFunctionMock<LimitExceededHandler>([
-        {
-          parameters: [request, { limit: 10, remaining: 0, reset: 3 }],
-          return: Promise.resolve(
-            new Response(null, {
-              status: 429,
-              headers: {
-                'ratelimit-limit': 'spoofed',
-                'ratelimit-remaining': 'spoofed',
-                'ratelimit-reset': 'spoofed',
-                'retry-after': '120',
-              },
-            }),
-          ),
-        },
-      ]);
-
-      const middleware = createRateLimitMiddleware(keyResolver, rateLimiter, limitExceededHandler);
-
-      const rateLimitResponse = await middleware(request, handler);
-
-      // set (not appended), otherwise the values would be comma joined ("spoofed, 10")
-      expect([...rateLimitResponse.headers.entries()]).toMatchInlineSnapshot(`
-        [
-          [
-            "ratelimit-limit",
-            "10",
-          ],
-          [
-            "ratelimit-remaining",
-            "0",
-          ],
-          [
-            "ratelimit-reset",
-            "3",
-          ],
-          [
-            "retry-after",
-            "3",
-          ],
-        ]
-      `);
-
-      expect(handlerMocks).toHaveLength(0);
-      expect(keyResolverMocks).toHaveLength(0);
-      expect(rateLimiterMocks).toHaveLength(0);
-      expect(limitExceededHandlerMocks).toHaveLength(0);
     });
 
     test('with key, within limit, with retry-after set by the handler', async () => {
@@ -510,8 +310,151 @@ describe('middleware', () => {
       expect(rateLimiterMocks).toHaveLength(0);
     });
 
-    test('with key, exceeded, with never resetting limit (duration 0)', async () => {
+    test('with key, with never resetting limit (duration 0)', async () => {
       const request = new ServerRequest('https://example.com');
+      const response = new Response();
+
+      const [handler, handlerMocks] = useFunctionMock<Handler>([
+        { parameters: [request], return: Promise.resolve(response) },
+      ]);
+
+      const [keyResolver, keyResolverMocks] = useFunctionMock<KeyResolver>([
+        { parameters: [request], return: '203.0.113.1' },
+      ]);
+
+      const [rateLimiter, rateLimiterMocks] = useObjectMock<RateLimiter>([
+        { name: 'points', value: 10 },
+        { name: 'consume', parameters: ['203.0.113.1'], return: Promise.resolve(new RateLimiterRes(9, -1, 1, true)) },
+      ]);
+
+      const middleware = createRateLimitMiddleware(keyResolver, rateLimiter);
+
+      const rateLimitResponse = await middleware(request, handler);
+
+      // no ratelimit-reset, as the limit never resets
+      expect(Object.fromEntries(rateLimitResponse.headers.entries())).toMatchInlineSnapshot(`
+        {
+          "ratelimit-limit": "10",
+          "ratelimit-remaining": "9",
+        }
+      `);
+
+      expect(handlerMocks).toHaveLength(0);
+      expect(keyResolverMocks).toHaveLength(0);
+      expect(rateLimiterMocks).toHaveLength(0);
+    });
+
+    test('with key, exceeded', async () => {
+      const request = new ServerRequest('https://example.com/resource');
+
+      const [handler, handlerMocks] = useFunctionMock<Handler>([]);
+
+      const [keyResolver, keyResolverMocks] = useFunctionMock<KeyResolver>([
+        { parameters: [request], return: '203.0.113.1' },
+      ]);
+
+      const [rateLimiter, rateLimiterMocks] = useObjectMock<RateLimiter>([
+        { name: 'points', value: 10 },
+        {
+          name: 'consume',
+          parameters: ['203.0.113.1'],
+          return: Promise.reject(new RateLimiterRes(0, 2500, 11, false)),
+        },
+      ]);
+
+      const middleware = createRateLimitMiddleware(keyResolver, rateLimiter);
+
+      const error = await middleware(request, handler).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+
+      expect(error).toBeInstanceOf(HttpError);
+      expect(error).toMatchObject({
+        status: 429,
+        title: 'Too Many Requests',
+        _httpError: 'TooManyRequests',
+        detail: 'Limit of 10 requests reached for GET https://example.com/resource, retry in 3 seconds',
+        instance: 'https://example.com/resource',
+        limit: 10,
+        remaining: 0,
+        reset: 3,
+        retryAfter: 3,
+        headers: {
+          'ratelimit-limit': '10',
+          'ratelimit-remaining': '0',
+          'ratelimit-reset': '3',
+          'retry-after': '3',
+        },
+      });
+
+      expect(handlerMocks).toHaveLength(0);
+      expect(keyResolverMocks).toHaveLength(0);
+      expect(rateLimiterMocks).toHaveLength(0);
+    });
+
+    test('with key, exceeded, within the last second (retry-after at least a second)', async () => {
+      const request = new ServerRequest('https://example.com');
+
+      const [handler, handlerMocks] = useFunctionMock<Handler>([]);
+
+      const [keyResolver, keyResolverMocks] = useFunctionMock<KeyResolver>([
+        { parameters: [request], return: '203.0.113.1' },
+      ]);
+
+      const [rateLimiter, rateLimiterMocks] = useObjectMock<RateLimiter>([
+        { name: 'points', value: 10 },
+        { name: 'consume', parameters: ['203.0.113.1'], return: Promise.reject(new RateLimiterRes(0, 0, 11, false)) },
+      ]);
+
+      const middleware = createRateLimitMiddleware(keyResolver, rateLimiter);
+
+      await expect(middleware(request, handler)).rejects.toMatchObject({
+        status: 429,
+        reset: 0,
+        retryAfter: 1,
+        headers: { 'ratelimit-limit': '10', 'ratelimit-remaining': '0', 'ratelimit-reset': '0', 'retry-after': '1' },
+      });
+
+      expect(handlerMocks).toHaveLength(0);
+      expect(keyResolverMocks).toHaveLength(0);
+      expect(rateLimiterMocks).toHaveLength(0);
+    });
+
+    test('with key, exceeded, with rate limiter res of a foreign rate-limiter-flexible copy', async () => {
+      const request = new ServerRequest('https://example.com');
+
+      const [handler, handlerMocks] = useFunctionMock<Handler>([]);
+
+      const [keyResolver, keyResolverMocks] = useFunctionMock<KeyResolver>([
+        { parameters: [request], return: '203.0.113.1' },
+      ]);
+
+      const [rateLimiter, rateLimiterMocks] = useObjectMock<RateLimiter>([
+        { name: 'points', value: 10 },
+        {
+          name: 'consume',
+          parameters: ['203.0.113.1'],
+          return: Promise.reject({
+            remainingPoints: 0,
+            msBeforeNext: 2500,
+            consumedPoints: 11,
+            isFirstInDuration: false,
+          }),
+        },
+      ]);
+
+      const middleware = createRateLimitMiddleware(keyResolver, rateLimiter);
+
+      await expect(middleware(request, handler)).rejects.toMatchObject({ status: 429, remaining: 0, retryAfter: 3 });
+
+      expect(handlerMocks).toHaveLength(0);
+      expect(keyResolverMocks).toHaveLength(0);
+      expect(rateLimiterMocks).toHaveLength(0);
+    });
+
+    test('with key, exceeded, with never resetting limit (duration 0)', async () => {
+      const request = new ServerRequest('https://example.com/resource');
 
       const [handler, handlerMocks] = useFunctionMock<Handler>([]);
 
@@ -524,30 +467,22 @@ describe('middleware', () => {
         { name: 'consume', parameters: ['203.0.113.1'], return: Promise.reject(new RateLimiterRes(0, -1, 11, false)) },
       ]);
 
-      const [limitExceededHandler, limitExceededHandlerMocks] = useFunctionMock<LimitExceededHandler>([
-        {
-          parameters: [request, { limit: 10, remaining: 0, reset: undefined }],
-          return: Promise.resolve(new Response(null, { status: 429 })),
-        },
-      ]);
+      const middleware = createRateLimitMiddleware(keyResolver, rateLimiter);
 
-      const middleware = createRateLimitMiddleware(keyResolver, rateLimiter, limitExceededHandler);
-
-      const rateLimitResponse = await middleware(request, handler);
-
-      // no reset / retry-after, as there is no point in time the client could retry
-      expect(rateLimitResponse.status).toBe(429);
-      expect(Object.fromEntries(rateLimitResponse.headers.entries())).toMatchInlineSnapshot(`
-        {
-          "ratelimit-limit": "10",
-          "ratelimit-remaining": "0",
-        }
-      `);
+      // no reset / retryAfter, as there is no point in time the client could retry
+      await expect(middleware(request, handler)).rejects.toMatchObject({
+        status: 429,
+        detail: 'Limit of 10 requests reached for GET https://example.com/resource',
+        limit: 10,
+        remaining: 0,
+        reset: undefined,
+        retryAfter: undefined,
+        headers: { 'ratelimit-limit': '10', 'ratelimit-remaining': '0' },
+      });
 
       expect(handlerMocks).toHaveLength(0);
       expect(keyResolverMocks).toHaveLength(0);
       expect(rateLimiterMocks).toHaveLength(0);
-      expect(limitExceededHandlerMocks).toHaveLength(0);
     });
 
     test('with async key resolver', async () => {
@@ -690,7 +625,6 @@ describe('middleware', () => {
 
       const response1 = await middleware(request, handler);
       const response2 = await middleware(request, handler);
-      const response3 = await middleware(request, handler);
 
       expect(response1.status).toBe(200);
       expect(response1.headers.get('ratelimit-limit')).toBe('2');
@@ -699,9 +633,7 @@ describe('middleware', () => {
       expect(Number(response1.headers.get('ratelimit-reset'))).toBeGreaterThan(0);
       expect(response2.status).toBe(200);
       expect(response2.headers.get('ratelimit-remaining')).toBe('0');
-      expect(response3.status).toBe(429);
-      expect(response3.headers.get('ratelimit-remaining')).toBe('0');
-      expect(response3.headers.get('retry-after')).not.toBeNull();
+      await expect(middleware(request, handler)).rejects.toMatchObject({ status: 429, remaining: 0 });
 
       expect(handlerMocks).toHaveLength(0);
       expect(keyResolverMocks).toHaveLength(0);

@@ -26,6 +26,7 @@ A minimal rate limiting middleware for chubbyts-undici-server.
  * node: >=22
  * [@chubbyts/chubbyts-dic-config-factory][5]: ^1.0.0
  * [@chubbyts/chubbyts-dic-types][3]: ^2.3.0
+ * [@chubbyts/chubbyts-http-error][9]: ^3.4.1
  * [@chubbyts/chubbyts-undici-server][2]: ^1.2.0
  * [rate-limiter-flexible][6]: ^11.2.0
 
@@ -34,15 +35,16 @@ A minimal rate limiting middleware for chubbyts-undici-server.
 Through [NPM](https://www.npmjs.com) as [@chubbyts/chubbyts-undici-rate-limit][1].
 
 ```ts
-npm i @chubbyts/chubbyts-undici-rate-limit@^1.0.0
+npm i @chubbyts/chubbyts-undici-rate-limit@^1.1.0
 ```
 
 ## Usage
 
 The middleware is a thin layer on top of [rate-limiter-flexible][6]: it resolves the key of a request (usually the
 client ip), consumes one point from a `RateLimiter*` and translates the result into the `ratelimit-limit`,
-`ratelimit-remaining` and `ratelimit-reset` (seconds) headers, or into a `429 Too Many Requests` (plus `retry-after`)
-once the limiter rejects. With `duration: 0` (the limit never resets) `ratelimit-reset` and `retry-after` are omitted.
+`ratelimit-remaining` and `ratelimit-reset` (seconds) headers, or throws a `TooManyRequests` http error of
+[chubbyts-http-error][9] once the limiter rejects. With `duration: 0` (the limit never resets) `ratelimit-reset` is
+omitted.
 
 The header names follow the widely supported earlier drafts of [draft-ietf-httpapi-ratelimit-headers][8] (separate
 `ratelimit-*` headers); the current drafts fold them into a single structured `ratelimit` header, which is not
@@ -120,21 +122,35 @@ import { RateLimiterMongo } from 'rate-limiter-flexible';
 const rateLimiter = new RateLimiterMongo({ storeClient: mongoClient, points: 100, duration: 60 });
 ```
 
-### Custom limit exceeded response
+### Limit exceeded
 
-The third argument replaces the default `429` response, e.g. to return a problem json:
+Once the limit is exceeded the middleware does not return a response, it throws a `429 Too Many Requests` `HttpError`
+(`createTooManyRequests` of [chubbyts-http-error][9]), so that the error middleware of the application (e.g. the one
+of [chubbyts-api][10]) turns it into the response and rate limit errors look like every other error (problem json,
+logging, ...). The error carries as data:
+
+ * `limit`, `remaining`, `reset` (seconds, `undefined` if the limit never resets) and `retryAfter` (seconds, at least
+   `1`, `undefined` if the limit never resets)
+ * `headers`: the `ratelimit-limit`, `ratelimit-remaining`, `ratelimit-reset` and `retry-after` headers of the `429`
+   response, ready to be added by the error middleware (the reset and retry-after ones only if the limit resets at all)
 
 ```ts
-import type { LimitExceededHandler } from '@chubbyts/chubbyts-undici-rate-limit/dist/middleware';
+import { isHttpError } from '@chubbyts/chubbyts-http-error/dist/http-error';
 
-const limitExceededHandler: LimitExceededHandler = async (request, { limit, reset }) => {
-  return new Response(JSON.stringify({ title: 'Too Many Requests', detail: `Limit of ${limit} reached, retry in ${reset}s` }), {
-    status: 429,
-    headers: { 'content-type': 'application/problem+json' },
-  });
+const errorMiddleware: Middleware = async (request, handler) => {
+  try {
+    return await handler(request);
+  } catch (e) {
+    if (isHttpError(e) && e.status === 429) {
+      return new Response(JSON.stringify({ type: e.type, title: e.title, detail: e.detail }), {
+        status: 429,
+        headers: { 'content-type': 'application/problem+json', ...(e.headers as Record<string, string>) },
+      });
+    }
+
+    throw e;
+  }
 };
-
-const rateLimitMiddleware = createRateLimitMiddleware(keyResolver, rateLimiter, limitExceededHandler);
 ```
 
 ### Service factories (chubbyts-dic-config)
@@ -174,7 +190,7 @@ const container = createContainerByConfigFactory({
 const rateLimitMiddleware = container.get<Middleware>('rateLimitMiddleware');
 ```
 
-The `rateLimitMiddlewareServiceFactory` uses the services `rateLimitKeyResolver`, `rateLimitRateLimiter` and `rateLimitLimitExceededHandler` of the container if registered, and creates them through the shipped `keyResolverServiceFactory`, `rateLimiterServiceFactory` (a `RateLimiterMemory`) and `limitExceededHandlerServiceFactory` otherwise. Register any of them under its name to replace it (e.g. a `RateLimiterMongo` as `rateLimitRateLimiter`) or to share it with other services.
+The `rateLimitMiddlewareServiceFactory` uses the services `rateLimitKeyResolver` and `rateLimitRateLimiter` of the container if registered, and creates them through the shipped `keyResolverServiceFactory` and `rateLimiterServiceFactory` (a `RateLimiterMemory`) otherwise. Register any of them under its name to replace it (e.g. a `RateLimiterMongo` as `rateLimitRateLimiter`) or to share it with other services.
 
 #### With names
 
@@ -215,3 +231,5 @@ redis) do not share their counters.
 [6]: https://www.npmjs.com/package/rate-limiter-flexible
 [7]: https://www.npmjs.com/package/@chubbyts/chubbyts-undici-trusted-proxy
 [8]: https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/
+[9]: https://www.npmjs.com/package/@chubbyts/chubbyts-http-error
+[10]: https://www.npmjs.com/package/@chubbyts/chubbyts-api

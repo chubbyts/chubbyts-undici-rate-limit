@@ -1,7 +1,7 @@
 {
   "name": "@chubbyts/chubbyts-undici-rate-limit",
   "type": "module",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A minimal rate limiting middleware for chubbyts-undici-server.",
   "keywords": [
     "chubbyts",
@@ -47,6 +47,7 @@
   "dependencies": {
     "@chubbyts/chubbyts-dic-config-factory": "^1.0.0",
     "@chubbyts/chubbyts-dic-types": "^2.3.0",
+    "@chubbyts/chubbyts-http-error": "^3.4.1",
     "@chubbyts/chubbyts-undici-server": "^1.2.0",
     "rate-limiter-flexible": "^11.2.0"
   },

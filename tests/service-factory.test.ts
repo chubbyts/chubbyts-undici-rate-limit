@@ -8,11 +8,10 @@ import type { Handler, Middleware } from '@chubbyts/chubbyts-undici-server/dist/
 import { Response, ServerRequest } from '@chubbyts/chubbyts-undici-server/dist/server';
 import { RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
 import type { KeyResolver } from '../src/key-resolver';
-import type { LimitExceededHandler, RateLimiter } from '../src/middleware';
+import type { RateLimiter } from '../src/middleware';
 import type { RateLimitConfig } from '../src/service-factory';
 import {
   keyResolverServiceFactory,
-  limitExceededHandlerServiceFactory,
   rateLimiterServiceFactory,
   rateLimitMiddlewareServiceFactory,
 } from '../src/service-factory';
@@ -225,20 +224,6 @@ describe('service-factory', () => {
     });
   });
 
-  describe('limitExceededHandlerServiceFactory', () => {
-    test('without name', async () => {
-      const [container, containerMocks] = useObjectMock<Container>([]);
-
-      const service = limitExceededHandlerServiceFactory()(container);
-
-      const response = await service(createRequest(), { limit: 10, remaining: 0, reset: 1 });
-
-      expect(response.status).toBe(429);
-
-      expect(containerMocks).toHaveLength(0);
-    });
-  });
-
   describe('rateLimitMiddlewareServiceFactory', () => {
     test('with defaults, without registered services', async () => {
       const config = {
@@ -250,7 +235,6 @@ describe('service-factory', () => {
         { name: 'get', parameters: ['config'], return: config },
         { name: 'has', parameters: ['rateLimitRateLimiter'], return: false },
         { name: 'get', parameters: ['config'], return: config },
-        { name: 'has', parameters: ['rateLimitLimitExceededHandler'], return: false },
       ]);
 
       const service = rateLimitMiddlewareServiceFactory()(container);
@@ -261,15 +245,14 @@ describe('service-factory', () => {
         { parameters: [request], return: Promise.resolve(new Response()) },
       ]);
 
-      // the shipped factories get used: the configured header gets counted in memory, the default 429 gets served
+      // the shipped factories get used: the configured header gets counted in memory, the 429 error gets thrown
       const response1 = await service(request, handler);
-      const response2 = await service(request, handler);
 
       expect(response1.status).toBe(200);
       expect(response1.headers.get('ratelimit-limit')).toBe('1');
       expect(response1.headers.get('ratelimit-remaining')).toBe('0');
-      expect(response2.status).toBe(429);
-      expect(await response2.text()).toBe('Too Many Requests');
+
+      await expect(service(request, handler)).rejects.toMatchObject({ status: 429 });
 
       expect(handlerMocks).toHaveLength(0);
       expect(containerMocks).toHaveLength(0);
@@ -284,7 +267,6 @@ describe('service-factory', () => {
         { name: 'points', value: 5 },
         { name: 'consume', parameters: ['key'], return: Promise.resolve(new RateLimiterRes(2, 5000, 3, false)) },
       ]);
-      const [limitExceededHandler, limitExceededHandlerMocks] = useFunctionMock<LimitExceededHandler>([]);
 
       const [handler, handlerMocks] = useFunctionMock<Handler>([
         { parameters: [request], return: Promise.resolve(response) },
@@ -295,8 +277,6 @@ describe('service-factory', () => {
         { name: 'get', parameters: ['rateLimitKeyResolver'], return: keyResolver },
         { name: 'has', parameters: ['rateLimitRateLimiter'], return: true },
         { name: 'get', parameters: ['rateLimitRateLimiter'], return: rateLimiter },
-        { name: 'has', parameters: ['rateLimitLimitExceededHandler'], return: true },
-        { name: 'get', parameters: ['rateLimitLimitExceededHandler'], return: limitExceededHandler },
       ]);
 
       const service = rateLimitMiddlewareServiceFactory()(container);
@@ -311,22 +291,17 @@ describe('service-factory', () => {
 
       expect(keyResolverMocks).toHaveLength(0);
       expect(rateLimiterMocks).toHaveLength(0);
-      expect(limitExceededHandlerMocks).toHaveLength(0);
       expect(handlerMocks).toHaveLength(0);
       expect(containerMocks).toHaveLength(0);
     });
 
     test('with name, with registered named services', async () => {
       const request = createRequest();
-      const response = new Response(null, { status: 429 });
 
       const [keyResolver, keyResolverMocks] = useFunctionMock<KeyResolver>([{ parameters: [request], return: 'key' }]);
       const [rateLimiter, rateLimiterMocks] = useObjectMock<RateLimiter>([
         { name: 'points', value: 2 },
         { name: 'consume', parameters: ['key'], return: Promise.reject(new RateLimiterRes(0, 5000, 3, false)) },
-      ]);
-      const [limitExceededHandler, limitExceededHandlerMocks] = useFunctionMock<LimitExceededHandler>([
-        { parameters: [request, { limit: 2, remaining: 0, reset: 5 }], return: Promise.resolve(response) },
       ]);
 
       const [handler, handlerMocks] = useFunctionMock<Handler>([]);
@@ -336,20 +311,20 @@ describe('service-factory', () => {
         { name: 'get', parameters: ['rateLimitKeyResolverlogin'], return: keyResolver },
         { name: 'has', parameters: ['rateLimitRateLimiterlogin'], return: true },
         { name: 'get', parameters: ['rateLimitRateLimiterlogin'], return: rateLimiter },
-        { name: 'has', parameters: ['rateLimitLimitExceededHandlerlogin'], return: true },
-        { name: 'get', parameters: ['rateLimitLimitExceededHandlerlogin'], return: limitExceededHandler },
       ]);
 
       const service = rateLimitMiddlewareServiceFactory('login')(container);
 
-      const rateLimitResponse = await service(request, handler);
-
-      expect(rateLimitResponse.status).toBe(429);
-      expect(rateLimitResponse.headers.get('retry-after')).toBe('5');
+      await expect(service(request, handler)).rejects.toMatchObject({
+        status: 429,
+        limit: 2,
+        remaining: 0,
+        reset: 5,
+        retryAfter: 5,
+      });
 
       expect(keyResolverMocks).toHaveLength(0);
       expect(rateLimiterMocks).toHaveLength(0);
-      expect(limitExceededHandlerMocks).toHaveLength(0);
       expect(handlerMocks).toHaveLength(0);
       expect(containerMocks).toHaveLength(0);
     });
@@ -370,7 +345,6 @@ describe('service-factory', () => {
             ['rateLimitMiddleware', rateLimitMiddlewareServiceFactory()],
             ['rateLimitKeyResolver', keyResolverServiceFactory()],
             ['rateLimitRateLimiter', rateLimiterServiceFactory()],
-            ['rateLimitLimitExceededHandler', limitExceededHandlerServiceFactory()],
           ]),
         },
       })();
@@ -385,12 +359,13 @@ describe('service-factory', () => {
 
       const response1 = await rateLimitMiddleware(createRequest({ 'x-api-key': 'key-1' }), handler);
       const response2 = await rateLimitMiddleware(createRequest({}, { clientIp: 'key-1' }), handler);
-      const response3 = await rateLimitMiddleware(createRequest({ 'x-api-key': 'key-1' }), handler);
       const response4 = await rateLimitMiddleware(createRequest({ 'x-api-key': 'key-2' }), handler);
 
       expect(response1.headers.get('ratelimit-remaining')).toBe('1');
       expect(response2.headers.get('ratelimit-remaining')).toBe('0');
-      expect(response3.status).toBe(429);
+      await expect(rateLimitMiddleware(createRequest({ 'x-api-key': 'key-1' }), handler)).rejects.toMatchObject({
+        status: 429,
+      });
       expect(response4.status).toBe(200);
 
       expect(handlerMocks).toHaveLength(0);
@@ -426,14 +401,15 @@ describe('service-factory', () => {
       // each named middleware counts with its own limiter
       const apiResponse1 = await apiMiddleware(createRequest({ 'x-api-key': 'key-1' }), handler);
       const loginResponse1 = await loginMiddleware(createRequest({ 'x-api-key': 'key-1' }), handler);
-      const loginResponse2 = await loginMiddleware(createRequest({ 'x-api-key': 'key-1' }), handler);
+      await expect(loginMiddleware(createRequest({ 'x-api-key': 'key-1' }), handler)).rejects.toMatchObject({
+        status: 429,
+      });
       const apiResponse2 = await apiMiddleware(createRequest({ 'x-api-key': 'key-1' }), handler);
 
       expect(apiResponse1.headers.get('ratelimit-limit')).toBe('100');
       expect(apiResponse1.headers.get('ratelimit-remaining')).toBe('99');
       expect(loginResponse1.headers.get('ratelimit-limit')).toBe('1');
       expect(loginResponse1.headers.get('ratelimit-remaining')).toBe('0');
-      expect(loginResponse2.status).toBe(429);
       expect(apiResponse2.headers.get('ratelimit-remaining')).toBe('98');
 
       expect(handlerMocks).toHaveLength(0);

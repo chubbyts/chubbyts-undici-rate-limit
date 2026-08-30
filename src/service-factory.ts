@@ -9,8 +9,8 @@ import {
   createKeyResolver,
   createStaticKeyResolver,
 } from './key-resolver.js';
-import type { LimitExceededHandler, RateLimiter } from './middleware.js';
-import { createDefaultLimitExceededHandler, createRateLimitMiddleware } from './middleware.js';
+import type { RateLimiter } from './middleware.js';
+import { createRateLimitMiddleware } from './middleware.js';
 
 /**
  * One key resolver, see `createHeaderKeyResolver`, `createAttributeKeyResolver` and `createStaticKeyResolver`.
@@ -105,10 +105,6 @@ export const rateLimiterServiceFactory = createAbstractFactory(
   },
 );
 
-export const limitExceededHandlerServiceFactory = createAbstractFactory((): LimitExceededHandler => {
-  return createDefaultLimitExceededHandler();
-});
-
 export const rateLimitMiddlewareServiceFactory = createAbstractFactory(
   (container: Container, { resolveDependency }): Middleware => {
     // a registered service wins over the shipped factory, so that any part can be replaced (e.g. a RateLimiterRedis)
@@ -116,7 +112,6 @@ export const rateLimitMiddlewareServiceFactory = createAbstractFactory(
     return createRateLimitMiddleware(
       resolveDependency(container, 'rateLimitKeyResolver', keyResolverServiceFactory),
       resolveDependency(container, 'rateLimitRateLimiter', rateLimiterServiceFactory),
-      resolveDependency(container, 'rateLimitLimitExceededHandler', limitExceededHandlerServiceFactory),
     );
   },
 );
