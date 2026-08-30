@@ -1,5 +1,7 @@
 allowBuilds:
   unrs-resolver: true
+minimumReleaseAgeExclude:
+  - '@chubbyts/chubbyts-http-error@3.5.0'
 packageExtensions:
   '@stryker-mutator/core':
     dependencies:

@@ -469,16 +469,23 @@ describe('middleware', () => {
 
       const middleware = createRateLimitMiddleware(keyResolver, rateLimiter);
 
-      // no reset / retryAfter, as there is no point in time the client could retry
-      await expect(middleware(request, handler)).rejects.toMatchObject({
+      const error = await middleware(request, handler).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+
+      // no reset / retryAfter, as there is no point in time the client could retry: not even as undefined properties
+      expect(error).toBeInstanceOf(HttpError);
+      expect(error).toMatchObject({
         status: 429,
         detail: 'Limit of 10 requests reached for GET https://example.com/resource',
         limit: 10,
         remaining: 0,
-        reset: undefined,
-        retryAfter: undefined,
         headers: { 'ratelimit-limit': '10', 'ratelimit-remaining': '0' },
       });
+      expect(Object.hasOwn(error as object, 'reset')).toBe(false);
+      expect(Object.hasOwn(error as object, 'retryAfter')).toBe(false);
+      expect((error as HttpError).headers).toStrictEqual({ 'ratelimit-limit': '10', 'ratelimit-remaining': '0' });
 
       expect(handlerMocks).toHaveLength(0);
       expect(keyResolverMocks).toHaveLength(0);

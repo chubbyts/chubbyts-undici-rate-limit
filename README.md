@@ -26,7 +26,7 @@ A minimal rate limiting middleware for chubbyts-undici-server.
  * node: >=22
  * [@chubbyts/chubbyts-dic-config-factory][5]: ^1.0.0
  * [@chubbyts/chubbyts-dic-types][3]: ^2.3.0
- * [@chubbyts/chubbyts-http-error][9]: ^3.4.1
+ * [@chubbyts/chubbyts-http-error][9]: ^3.5.0
  * [@chubbyts/chubbyts-undici-server][2]: ^1.2.0
  * [rate-limiter-flexible][6]: ^11.2.0
 
@@ -35,7 +35,7 @@ A minimal rate limiting middleware for chubbyts-undici-server.
 Through [NPM](https://www.npmjs.com) as [@chubbyts/chubbyts-undici-rate-limit][1].
 
 ```ts
-npm i @chubbyts/chubbyts-undici-rate-limit@^1.1.0
+npm i @chubbyts/chubbyts-undici-rate-limit@^1.2.0
 ```
 
 ## Usage
@@ -129,10 +129,11 @@ Once the limit is exceeded the middleware does not return a response, it throws 
 of [chubbyts-api][10]) turns it into the response and rate limit errors look like every other error (problem json,
 logging, ...). The error carries as data:
 
- * `limit`, `remaining`, `reset` (seconds, `undefined` if the limit never resets) and `retryAfter` (seconds, at least
-   `1`, `undefined` if the limit never resets)
+ * `limit`, `remaining`, `reset` (seconds) and `retryAfter` (seconds, at least `1`) as additional problem details,
+   `reset` and `retryAfter` are absent if the limit never resets (`duration: 0`)
  * `headers`: the `ratelimit-limit`, `ratelimit-remaining`, `ratelimit-reset` and `retry-after` headers of the `429`
-   response, ready to be added by the error middleware (the reset and retry-after ones only if the limit resets at all)
+   response, ready to be set by the error middleware (the reset and retry-after ones only if the limit resets at all),
+   never part of the body
 
 ```ts
 import { isHttpError } from '@chubbyts/chubbyts-http-error/dist/http-error';
@@ -141,10 +142,12 @@ const errorMiddleware: Middleware = async (request, handler) => {
   try {
     return await handler(request);
   } catch (e) {
-    if (isHttpError(e) && e.status === 429) {
-      return new Response(JSON.stringify({ type: e.type, title: e.title, detail: e.detail }), {
-        status: 429,
-        headers: { 'content-type': 'application/problem+json', ...(e.headers as Record<string, string>) },
+    if (isHttpError(e)) {
+      const { headers, _httpError, ...body } = e;
+
+      return new Response(JSON.stringify(body), {
+        status: e.status,
+        headers: { 'content-type': 'application/problem+json', ...headers },
       });
     }
 

@@ -26,24 +26,15 @@ const toInfo = (limit: number, { remainingPoints, msBeforeNext }: RateLimiterRes
   reset: msBeforeNext < 0 ? undefined : Math.ceil(msBeforeNext / 1000),
 });
 
-const toRateLimitHeaders = ({ limit, remaining, reset }: RateLimitInfo): Array<[string, string]> => [
-  ['ratelimit-limit', limit.toString()],
-  ['ratelimit-remaining', remaining.toString()],
-  ...(reset !== undefined ? [['ratelimit-reset', reset.toString()] as [string, string]] : []),
-];
+const toRateLimitHeaders = ({ limit, remaining, reset }: RateLimitInfo): Record<string, string> => ({
+  'ratelimit-limit': String(limit),
+  'ratelimit-remaining': String(remaining),
+  ...(reset !== undefined ? { 'ratelimit-reset': String(reset) } : {}),
+});
 
 // retry-after is only meaningful on a rejected response (rfc 9110) and a client should wait at least a second
 const toRetryAfter = ({ reset }: RateLimitInfo): number | undefined =>
   reset === undefined ? undefined : Math.max(1, reset);
-
-const toLimitExceededHeaders = (info: RateLimitInfo): Record<string, string> => {
-  const retryAfter = toRetryAfter(info);
-
-  return Object.fromEntries([
-    ...toRateLimitHeaders(info),
-    ...(retryAfter !== undefined ? [['retry-after', retryAfter.toString()]] : []),
-  ]);
-};
 
 const withRateLimitHeaders = (response: Response, info: RateLimitInfo): Response => {
   const rateLimitHeaders = toRateLimitHeaders(info);
@@ -51,21 +42,19 @@ const withRateLimitHeaders = (response: Response, info: RateLimitInfo): Response
   try {
     // set (not append) replaces existing rate limit headers (e.g. set by the handler), otherwise their values would
     // get comma joined, all other headers (e.g. multiple set-cookie) stay untouched
-    for (const [name, value] of rateLimitHeaders) {
+    for (const [name, value] of Object.entries(rateLimitHeaders)) {
       response.headers.set(name, value);
     }
 
     return response;
   } catch {
     // immutable headers (Response.redirect(), Response.error()): rebuild the response with the same body
-    const rateLimitHeaderNames = new Set(rateLimitHeaders.map(([name]) => name));
-
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
       headers: [
-        ...[...response.headers.entries()].filter(([name]) => !rateLimitHeaderNames.has(name)),
-        ...rateLimitHeaders,
+        ...[...response.headers.entries()].filter(([name]) => !(name in rateLimitHeaders)),
+        ...Object.entries(rateLimitHeaders),
       ],
     });
   }
@@ -95,9 +84,11 @@ const consume = async (rateLimiter: RateLimiter, key: string, request: ServerReq
 
     const info = toInfo(points, e);
     const { limit, remaining, reset } = info;
+    const retryAfter = toRetryAfter(info);
 
     // the error middleware turns it into the 429 response: `headers` are the ratelimit-* (and retry-after) headers
-    // of that response, `retryAfter` the value of the retry-after header, `undefined` if the limit never resets
+    // of that response (never part of the body), `reset` and `retryAfter` get skipped by the http error if `undefined`
+    // (the limit never resets)
     throw createTooManyRequests({
       detail:
         reset === undefined
@@ -107,8 +98,11 @@ const consume = async (rateLimiter: RateLimiter, key: string, request: ServerReq
       limit,
       remaining,
       reset,
-      retryAfter: toRetryAfter(info),
-      headers: toLimitExceededHeaders(info),
+      retryAfter,
+      headers: {
+        ...toRateLimitHeaders(info),
+        ...(retryAfter !== undefined ? { 'retry-after': String(retryAfter) } : {}),
+      },
     });
   }
 };
