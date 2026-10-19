@@ -24,18 +24,18 @@ A minimal rate limiting middleware for chubbyts-undici-server.
 ## Requirements
 
  * node: >=22
- * [@chubbyts/chubbyts-dic-config-factory][5]: ^1.0.0
- * [@chubbyts/chubbyts-dic-types][3]: ^2.3.0
- * [@chubbyts/chubbyts-http-error][9]: ^3.5.0
- * [@chubbyts/chubbyts-undici-server][2]: ^1.2.0
- * [rate-limiter-flexible][6]: ^11.2.0
+ * [@chubbyts/chubbyts-dic-config-factory][5]: ^1.0.1
+ * [@chubbyts/chubbyts-dic-types][3]: ^2.3.1
+ * [@chubbyts/chubbyts-http-error][9]: ^3.5.1
+ * [@chubbyts/chubbyts-undici-server][2]: ^1.3.1
+ * [rate-limiter-flexible][6]: ^11.2.3
 
 ## Installation
 
 Through [NPM](https://www.npmjs.com) as [@chubbyts/chubbyts-undici-rate-limit][1].
 
 ```ts
-npm i @chubbyts/chubbyts-undici-rate-limit@^1.2.0
+npm i @chubbyts/chubbyts-undici-rate-limit@^1.2.1
 ```
 
 ## Usage
